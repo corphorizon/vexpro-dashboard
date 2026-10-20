@@ -19,6 +19,7 @@
 
 import { moduleAllowedForModel } from '@/lib/business-model';
 import { roleCanWrite } from '@/lib/roles';
+import { ARCHIVE_HIDDEN_MODULES, ARCHIVE_MODE } from '@/lib/archive-mode';
 
 export interface ModuleDef {
   key: string;
@@ -242,6 +243,10 @@ export function canAccessModule(module: string, ctx: ModuleAccessContext): boole
     const def = MODULE_BY_KEY.get(module);
     if (def?.onlyWhereActivated) return false;
   }
+
+  // 1b. Modo archivo (2026-10-20): la carga de datos y el asistente no
+  // existen en un archivo de consulta — ni para el superadmin.
+  if (ARCHIVE_MODE && ARCHIVE_HIDDEN_MODULES.has(module)) return false;
 
   // 2. Superadmin de plataforma: ve el resto sin filtros de tenant.
   if (ctx.isSuperadmin) return true;

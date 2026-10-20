@@ -1,7 +1,14 @@
 // Preparar ≠ decidir en Órdenes de Pago (roles.ts, 2026-10-05).
 // La regla la usan el servidor (/transition → 403) y la UI (qué botón se
 // dibuja): si este test cambia, cambian las dos puntas a la vez.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+// Este archivo fija la regla de ROLES. El modo archivo (que hoy apaga toda
+// escritura) tiene su propio test en src/lib/archive-mode.test.ts.
+vi.mock('@/lib/archive-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/archive-mode')>()),
+  ARCHIVE_MODE: false,
+}));
+
 import {
   PAYMENT_ORDER_PREPARE_ROLES,
   FINANCE_ROLES,

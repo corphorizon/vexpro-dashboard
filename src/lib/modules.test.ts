@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+// Este archivo fija la regla de ROLES. El modo archivo (que hoy apaga toda
+// escritura) tiene su propio test en src/lib/archive-mode.test.ts.
+vi.mock('@/lib/archive-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/archive-mode')>()),
+  ARCHIVE_MODE: false,
+}));
+
 import { MODULES, MODULE_KEYS, MODULE_LABELS, MODULE_KEY_SET, RESERVED_MODULE_KEYS, sanitizeModuleKeys, moduleLabel, canAccessModule } from './modules';
 import { BUILT_IN_ROLES, isBuiltInRole, roleCanWrite } from './roles';
 

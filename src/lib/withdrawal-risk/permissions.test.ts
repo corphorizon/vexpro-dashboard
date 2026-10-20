@@ -9,7 +9,14 @@
 // pierde el control sin que nadie lo note.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+// Este archivo fija la regla de ROLES. El modo archivo (que hoy apaga toda
+// escritura) tiene su propio test en src/lib/archive-mode.test.ts.
+vi.mock('@/lib/archive-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/archive-mode')>()),
+  ARCHIVE_MODE: false,
+}));
+
 import {
   WITHDRAWAL_REVIEW_READ_ROLES,
   roleCanReadWithdrawalReview,

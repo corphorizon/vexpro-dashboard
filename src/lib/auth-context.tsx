@@ -8,6 +8,7 @@ import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-compa
 import { MODULE_KEYS, canAccessModule } from '@/lib/modules';
 import { isBuiltInRole } from '@/lib/roles';
 import { INACTIVITY_TIMEOUT_MS } from '@/lib/config';
+import { ARCHIVE_MODE } from '@/lib/archive-mode';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole =
@@ -955,12 +956,14 @@ export function hasModuleAccess(
 
 export function canAdd(user: User | null): boolean {
   if (!user) return false;
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 export function canEdit(user: User | null): boolean {
   if (!user) return false;
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
@@ -979,6 +982,7 @@ export { WRITE_CAPABLE_ROLES, roleCanWrite } from '@/lib/roles';
 
 export function canDelete(user: User | null): boolean {
   if (!user) return false;
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   if (user.is_superadmin) return true;
   return user.effective_role === 'admin';
 }
@@ -995,6 +999,7 @@ export function canDelete(user: User | null): boolean {
  */
 export function isCompanyAdmin(user: User | null): boolean {
   if (!user) return false;
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   if (user.is_superadmin) return true;
   return user.effective_role === 'admin';
 }

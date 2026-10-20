@@ -1,3 +1,4 @@
+import { archiveBlock } from '@/lib/archive-mode';
 // ─────────────────────────────────────────────────────────────────────────────
 // api-fetch — client-side fetch helper that appends ?company_id when the
 // caller is a platform superadmin in "viewing-as" mode.
@@ -53,6 +54,12 @@ export async function apiFetch(
   init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<Response> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init;
+
+  // Modo archivo: la escritura no sale del navegador. Misma 410 que daría el
+  // middleware (src/lib/archive-mode.ts), sin viaje de red.
+  const path = url.split('?')[0];
+  const blocked = archiveBlock(rest.method ?? 'GET', path);
+  if (blocked) return blocked;
 
   const headers = new Headers(rest.headers);
   if (typeof rest.body === 'string' && !headers.has('Content-Type')) {
