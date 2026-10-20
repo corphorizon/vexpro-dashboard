@@ -112,56 +112,64 @@ export async function GET(request: NextRequest) {
     // Cada slice repite EXACTAMENTE las columnas, el orden y las cotas que
     // pide hoy su `fetchX` en src/lib/supabase/queries.ts, para que
     // data-context no tenga que cambiar ni un tipo.
+    // ── PAGINADO OBLIGATORIO (incidente 2026-10-20) ─────────────────────────
+    // PostgREST corta en `db_max_rows` (1.000) AUNQUE el `.limit()` pida más,
+    // sin error y sin aviso. El 2026-10-20 commercial_monthly_results pasó de
+    // 1.000 filas (1.031) y el slice devolvió 1.000: 31 filas invisibles para
+    // el navegador — filas PROPIAS de heads de agosto entre ellas — y los
+    // guardados de /comisiones de ese día encadenaron acumulados en 0 contra
+    // un mes anterior que "no existía". El flag de abajo (`>= ROW_CAP`) era
+    // ciego a este corte: comparaba contra 10.000, y el corte real es a 1.000.
+    // Por eso cada slice se lee POR PÁGINAS con orden estable (`.order('id')`
+    // como desempate final): o llegan TODAS las filas, o el slice falla, o
+    // toca el techo y lo DICE.
+    const PAGINA = 1000;
     const consulta = (
       slice: BootstrapSliceKey,
-      build: () => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+      build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
     ): Promise<[BootstrapSliceKey, SliceResult]> => {
       if (estaVedado(slice)) {
         return Promise.resolve([slice, { rows: [], failed: false, truncated: false }]);
       }
-      return Promise.resolve(build()).then(
-        ({ data, error }) => {
-          if (error) {
-            console.error(`[bootstrap] slice "${slice}" falló:`, error);
-            return [slice, { rows: null, failed: true, truncated: false }] as [
-              BootstrapSliceKey,
-              SliceResult,
-            ];
+      return (async (): Promise<[BootstrapSliceKey, SliceResult]> => {
+        try {
+          const rows: unknown[] = [];
+          for (let from = 0; from < ROW_CAP; from += PAGINA) {
+            const { data, error } = await build(from, Math.min(from + PAGINA, ROW_CAP) - 1);
+            if (error) {
+              console.error(`[bootstrap] slice "${slice}" falló:`, error);
+              return [slice, { rows: null, failed: true, truncated: false }];
+            }
+            rows.push(...(data ?? []));
+            // Página corta = no hay más. Página llena = puede haber más: se
+            // sigue, hasta el techo defensivo ROW_CAP (que ahora sí AVISA).
+            if (!data || data.length < PAGINA) {
+              return [slice, { rows, failed: false, truncated: false }];
+            }
           }
-          const rows = data ?? [];
-          // ── El techo de filas AVISA (2026-08-31, auditoría, ítem 19) ──────
-          // Los `.limit(ROW_CAP)` estaban sin flag. Un tenant que pase las
-          // 10.000 filas de egresos recibe las primeras 10.000 y la pantalla
-          // suma ESAS: un total más chico, plausible y firmado. Un recorte
-          // silencioso es indistinguible de «no hay más» (§1.2).
-          // `>=` y no `===`: PostgREST puede cortar antes por db_max_rows.
-          return [slice, { rows, failed: false, truncated: rows.length >= ROW_CAP }] as [
-            BootstrapSliceKey,
-            SliceResult,
-          ];
-        },
-        (err) => {
+          return [slice, { rows, failed: false, truncated: true }];
+        } catch (err) {
           console.error(`[bootstrap] slice "${slice}" lanzó:`, err);
-          return [slice, { rows: null, failed: true, truncated: false }] as [
-            BootstrapSliceKey,
-            SliceResult,
-          ];
-        },
-      );
+          return [slice, { rows: null, failed: true, truncated: false }];
+        }
+      })();
     };
 
     const t = (table: string) => admin.from(table).select('*').eq('company_id', companyId);
 
     const resultados = await Promise.all([
-      consulta('periods', () =>
-        t('periods').order('year', { ascending: true }).order('month', { ascending: true })),
-      consulta('employees', () => t('employees').order('name', { ascending: true })),
-      consulta('commercialProfiles', () =>
-        t('commercial_profiles').order('name', { ascending: true })),
-      consulta('monthlyResults', () => t('commercial_monthly_results').limit(ROW_CAP)),
-      consulta('deposits', () => t('deposits').limit(ROW_CAP)),
-      consulta('withdrawals', () => t('withdrawals').limit(ROW_CAP)),
-      consulta('expenses', () =>
+      // `.order('id')` SIEMPRE al final: el desempate estable que exige el
+      // paginado (ver la cabecera de `consulta`). Un orden no total repite o
+      // saltea filas entre páginas sin ningún error.
+      consulta('periods', (a, b) =>
+        t('periods').order('year', { ascending: true }).order('month', { ascending: true }).order('id').range(a, b)),
+      consulta('employees', (a, b) => t('employees').order('name', { ascending: true }).order('id').range(a, b)),
+      consulta('commercialProfiles', (a, b) =>
+        t('commercial_profiles').order('name', { ascending: true }).order('id').range(a, b)),
+      consulta('monthlyResults', (a, b) => t('commercial_monthly_results').order('id').range(a, b)),
+      consulta('deposits', (a, b) => t('deposits').order('id').range(a, b)),
+      consulta('withdrawals', (a, b) => t('withdrawals').order('id').range(a, b)),
+      consulta('expenses', (a, b) =>
         // Igual que fetchExpenses: se embebe la OP origen SOLO para derivar
         // payment_order_description (subtítulo en Egresos, 2026-10-05). El
         // `!payment_order_id` desambigua las DOS relaciones expenses↔
@@ -172,27 +180,30 @@ export async function GET(request: NextRequest) {
           .select('*, payment_orders!payment_order_id(lines)')
           .eq('company_id', companyId)
           .order('sort_order', { ascending: true })
-          .limit(ROW_CAP)),
-      consulta('expenseTemplates', () =>
-        t('expense_templates').order('sort_order', { ascending: true })),
-      consulta('expenseTemplateHidden', () =>
+          .order('id')
+          .range(a, b)),
+      consulta('expenseTemplates', (a, b) =>
+        t('expense_templates').order('sort_order', { ascending: true }).order('id').range(a, b)),
+      consulta('expenseTemplateHidden', (a, b) =>
         admin
           .from('expense_template_period_hidden')
           .select('id, company_id, template_id, period_id')
-          .eq('company_id', companyId)),
-      consulta('preoperativeExpenses', () =>
-        t('preoperative_expenses').order('sort_order', { ascending: true })),
-      consulta('operatingIncome', () => t('operating_income').limit(ROW_CAP)),
-      consulta('brokerBalance', () => t('broker_balance').limit(ROW_CAP)),
-      consulta('financialStatus', () => t('financial_status').limit(ROW_CAP)),
-      consulta('partners', () => t('partners')),
-      consulta('partnerDistributions', () => t('partner_distributions').limit(ROW_CAP)),
-      consulta('propFirmSales', () => t('prop_firm_sales').limit(ROW_CAP)),
-      consulta('p2pTransfers', () => t('p2p_transfers').limit(ROW_CAP)),
-      consulta('liquidityMovements', () =>
-        t('liquidity_movements').order('date', { ascending: true }).limit(ROW_CAP)),
-      consulta('investments', () =>
-        t('investments').order('date', { ascending: true }).limit(ROW_CAP)),
+          .eq('company_id', companyId)
+          .order('id')
+          .range(a, b)),
+      consulta('preoperativeExpenses', (a, b) =>
+        t('preoperative_expenses').order('sort_order', { ascending: true }).order('id').range(a, b)),
+      consulta('operatingIncome', (a, b) => t('operating_income').order('id').range(a, b)),
+      consulta('brokerBalance', (a, b) => t('broker_balance').order('id').range(a, b)),
+      consulta('financialStatus', (a, b) => t('financial_status').order('id').range(a, b)),
+      consulta('partners', (a, b) => t('partners').order('id').range(a, b)),
+      consulta('partnerDistributions', (a, b) => t('partner_distributions').order('id').range(a, b)),
+      consulta('propFirmSales', (a, b) => t('prop_firm_sales').order('id').range(a, b)),
+      consulta('p2pTransfers', (a, b) => t('p2p_transfers').order('id').range(a, b)),
+      consulta('liquidityMovements', (a, b) =>
+        t('liquidity_movements').order('date', { ascending: true }).order('id').range(a, b)),
+      consulta('investments', (a, b) =>
+        t('investments').order('date', { ascending: true }).order('id').range(a, b)),
     ]);
 
     const porSlice = new Map<BootstrapSliceKey, SliceResult>(resultados);

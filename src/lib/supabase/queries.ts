@@ -611,24 +611,34 @@ export async function fetchCommercialMonthlyResults(
   // huge today but it scales linearly and was a measurable contributor to
   // the "Cargando..." hang Kevin reported on 2026-05-01.
   //
-  // Defensive .limit(10000) — typical month has <100 rows, so 10K covers
-  // ~8 years of growth before we'd need pagination.
-  let query = supabase
-    .from('commercial_monthly_results')
-    .select('*')
-    .eq('company_id', companyId)
-    .limit(10000);
-
-  if (periodIds) {
-    query = query.in('period_id', periodIds);
+  // ── PAGINADO OBLIGATORIO (incidente 2026-10-20) ──────────────────────────
+  // El «.limit(10000) defensivo» era una mentira cómoda: PostgREST corta en
+  // `db_max_rows` (1.000) AUNQUE el limit pida más, sin error. El 2026-10-20
+  // esta tabla pasó de 1.000 filas (1.031) y este fetch devolvió 1.000: 31
+  // filas invisibles (filas PROPIAS de heads de agosto entre ellas), y los
+  // guardados de /comisiones de ese día encadenaron acumulados en 0 contra un
+  // mes anterior "inexistente". Páginas de 1.000 con orden estable por id:
+  // o llegan TODAS, o es error. Techo defensivo 10.000, ahora CON aviso.
+  const out: CommercialMonthlyResult[] = [];
+  for (let desde = 0; desde < 10_000; desde += 1000) {
+    let query = supabase
+      .from('commercial_monthly_results')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('id')
+      .range(desde, desde + 999);
+    if (periodIds) {
+      query = query.in('period_id', periodIds);
+    }
+    const { data, error } = await withSignal(query, opts);
+    if (error) {
+      console.error('Error fetching commercial monthly results:', error.message);
+      rethrowIfAborted(opts, error);
+      return [];
+    }
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return out;
   }
-
-  const { data, error } = await withSignal(query, opts);
-
-  if (error) {
-    console.error('Error fetching commercial monthly results:', error.message);
-    rethrowIfAborted(opts, error);
-    return [];
-  }
-  return data ?? [];
+  console.warn('[queries] commercial_monthly_results tocó el techo de 10.000 filas — resultado RECORTADO');
+  return out;
 }
