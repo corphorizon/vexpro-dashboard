@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/sidebar';
 import { Topbar } from '@/components/topbar';
 import { TruncatedDataBanner } from '@/components/truncated-data-banner';
 import { ViewingAsBanner } from '@/components/viewing-as-banner';
+import { AtlasMigrationBanner, AtlasMigrationModal } from '@/components/atlas-migration-notice';
 import { ModuleRouteGuard } from '@/components/module-route-guard';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PeriodProvider } from '@/lib/period-context';
@@ -93,7 +94,11 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
             sidebarId={SIDEBAR_ID}
           />
           <ViewingAsBanner />
+          {/* Empresas migradas a Atlas (2026-10-18): banner fijo en todas las
+              páginas, dentro del sticky para que no se pierda al hacer scroll. */}
+          <AtlasMigrationBanner />
         </div>
+        <AtlasMigrationModal />
         {/* Un total corto y creíble es peor que un error: si /api/bootstrap
             recortó algún slice por su techo de filas, hay que decirlo donde
             sea que se mire el número (§1.2). */}

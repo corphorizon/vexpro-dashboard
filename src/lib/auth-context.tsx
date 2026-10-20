@@ -296,6 +296,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fetch('/api/auth/2fa-seal', { method: 'DELETE' }).catch(() => {
           /* non-fatal: el sello vence solo y el login lo re-emite */
         });
+        // Aviso «Nos mudamos a Atlas»: el «Seguir aquí» vale sólo para la
+        // sesión. Cualquier salida lo olvida y el próximo login lo vuelve a
+        // mostrar (src/lib/atlas-migration.ts).
+        import('./atlas-migration')
+          .then(({ clearAtlasNoticeDismissals }) => clearAtlasNoticeDismissals())
+          .catch(() => { /* non-fatal */ });
         // Fase 4b: el caché SWR sólo se tira en la salida EXPLÍCITA (ver el
         // comentario de `salidaExplicita` arriba). En el auto-logout por
         // inactividad se CONSERVA a propósito: quien vuelve tras 2h es la
