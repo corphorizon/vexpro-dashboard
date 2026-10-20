@@ -91,29 +91,6 @@ async function captureSentry(
   }
 }
 
-/**
- * Respuesta en modo archivo: lee (credenciales) pero no escribe nada.
- * Firma válida → errorCode 0 (recibido, no se reintenta); inválida → 1;
- * ilegible → 2 sin campos, igual que el flujo normal.
- */
-async function archivedAck(request: NextRequest, companyId: string, ip: string): Promise<NextResponse> {
-  const creds = await resolvePayprosCredentials(companyId);
-  if (!creds) return new NextResponse('Not found', { status: 404 });
-  const rawBody = await request.text();
-  const parsed = parseOutgoing(rawBody);
-  await captureSentry(
-    'paypros: aviso recibido con Smart Dashboard archivado (NO guardado)',
-    { companyId, ip, rawBody, notifyReference: parsed?.notifyReference ?? null },
-    'warning',
-  );
-  if (!parsed) return textPlain(buildUnparseableResponse(creds.signKey, creds.apiKey));
-  const check = verifyOutgoingSignature(parsed, creds.signKey);
-  if (!check.valid) return textPlain(buildIngoingResponse(1, parsed, creds.signKey, creds.apiKey));
-  console.warn(
-    `[paypros-webhook] ARCHIVADO: acuso recibo sin guardar company=${companyId} notifyReference=${parsed.notifyReference} uid=${parsed.uid}`,
-  );
-  return textPlain(signedWith(0, parsed, creds.signKey, creds.apiKey, check.variant));
-}
 
 export async function POST(
   request: NextRequest,
@@ -134,14 +111,17 @@ export async function POST(
       return new NextResponse('Not found', { status: 404 });
     }
 
-    // ── MODO ARCHIVO (src/lib/archive-mode.ts, 2026-10-20) ──────────────
-    // Smart Dashboard no recibe datos nuevos. NO se responde 410: Pay-Pros
-    // lee cualquier cosa distinta de 200 + ingoing firmado como entrega
-    // fallida y reintenta. Se acusa recibo firmado SIN escribir en la base
-    // (ni el evento crudo ni el contador del rate limit) y el body queda en
-    // el log y en Sentry, por si un aviso tardío hay que cargarlo a mano en
-    // Atlas. Lo correcto es repuntar o dar de baja el webhook en Pay-Pros.
-    if (ARCHIVE_MODE) return await archivedAck(request, companyId, ip);
+    // ── MODO ARCHIVO (src/lib/archive-mode.ts) ───────────────────────────
+    // 2026-10-21: Kevin pidió quitarle a Smart Dashboard la última clave
+    // (API_CREDENTIALS_MASTER_KEY). Sin ella no se pueden leer las
+    // credenciales de Pay-Pros para firmar el acuse, así que el webhook
+    // responde 410 sin leer nada. Atlas no depende de este aviso (toma los
+    // depósitos de Pay-Pros desde el CRM). Pay-Pros reintentará hasta dar
+    // el webhook por caído; lo correcto es darlo de baja en su panel.
+    if (ARCHIVE_MODE) {
+      console.warn(`[paypros-webhook] ARCHIVADO: 410 company=${companyId} ip=${ip}`);
+      return new NextResponse('Gone: Smart Dashboard está archivado', { status: 410 });
+    }
 
     const admin = createAdminClient();
 
