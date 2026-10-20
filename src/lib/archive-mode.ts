@@ -129,7 +129,7 @@ export const ARCHIVE_HIDDEN_MODULES: ReadonlySet<string> = new Set(['upload', 'a
  * Atlas TODAVÍA lee MT5 (y quizás Orion) por aquí con un token de socio
  * contra dashboard.horizonconsulting.ai (proveedor «MT5» de Atlas,
  * src/lib/support/mt5Config.ts allá). Cortarlo hoy dejaría a Atlas sin esos
- * datos. Cuando Atlas ya no dependa, la cabeza lo pone en `false` y estas
+ * datos. Cuando Atlas ya no dependa, se puso en `false` (2026-10-20: Atlas lee MT5 y Orion directo, PR workspace-horizon#593) y estas
  * rutas responden 410 con cualquier método.
  *
  * OJO: estas rutas sirven lo ESPEJADO (mt5_account_activity,
@@ -137,7 +137,7 @@ export const ARCHIVE_HIDDEN_MODULES: ReadonlySet<string> = new Set(['upload', 'a
  * /api/cron/sync-crm. Con los crons apagados, lo que reciba Atlas queda
  * congelado a la fecha de corte (cada respuesta trae `asOf`, así que se ve).
  */
-export const ARCHIVE_PARTNER_API_OPEN: boolean = true;
+export const ARCHIVE_PARTNER_API_OPEN: boolean = false;
 
 /** Rutas que se autentican con token de socio (partner_api_tokens). */
 export const ARCHIVE_PARTNER_PREFIXES: readonly string[] = Object.freeze(['/api/partner/']);
