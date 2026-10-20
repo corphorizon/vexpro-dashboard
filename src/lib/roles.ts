@@ -182,3 +182,13 @@ export function roleCanWriteFinance(role: string): boolean {
   // ruta de finanzas — mismo criterio que canAdd/canEdit en auth-context.
   return role === 'superadmin' || (FINANCE_ROLES as readonly string[]).includes(role);
 }
+
+/**
+ * El gemelo de `roleCanWriteFinance` para el dominio HR (comisiones). Mismo
+ * criterio con el superadmin. Lo usa /comisiones para no dibujar el botón
+ * «Actualizar» del insumo CRM a quien el POST le va a responder 403
+ * (2026-10-20, migración 132).
+ */
+export function roleCanWriteHr(role: string): boolean {
+  return role === 'superadmin' || (HR_ROLES as readonly string[]).includes(role);
+}

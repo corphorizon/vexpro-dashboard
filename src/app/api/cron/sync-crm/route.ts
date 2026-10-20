@@ -16,6 +16,8 @@
 //   ?full=1             → ignora el cursor y recorre el histórico entero
 //   ?espejo=full        → SÓLO el espejo base (retiros, depósitos y perfiles)
 //                         con los cursores desde cero, sin ningún extra
+//                         (FALSO desde 2026-10-20: corre UNO, la cache de
+//                         insumos de /comisiones — ver CORRECCIÓN abajo)
 //   ?pnl_from=&pnl_to=  → backfill del cierre diario de PNL para ese rango
 //                         (`YYYY-MM-DD`, UTC, inclusive)
 //
@@ -50,6 +52,17 @@
 // La diferencia, en dos líneas:
 //   ?full=1      = TODO + cursores desde cero. Manual. Puede exceder los 300 s.
 //   ?espejo=full = SÓLO el espejo base + cursores desde cero. Apto para cron.
+//
+// ── CORRECCIÓN (2026-10-20): ?espejo=full YA NO ES «SIN NINGÚN EXTRA» ──────
+// Lo de arriba («SÓLO el espejo base», «sin ningún extra») fue verdad hasta
+// la migración 132. Hoy el modo espejo corre UN extra, y el modo completo
+// también: el recálculo de la cache de insumos de /comisiones
+// (`recomputarInsumosComisiones`, mes anterior + mes en curso, sólo empresas
+// cuyo modelo tiene comisiones). Va en el espejo porque es la corrida diaria
+// garantizada justo después de re-barrer los retiros: es el momento en que el
+// net deposit del mes vencido queda bien. El costo está acotado por el
+// `statement_timeout` de 30 s de las RPC (ver `insumosDeComisiones` abajo) y
+// tiene un corte por presupuesto que AVISA en vez de pasarse de los 300 s.
 //
 // Horario: 00:20 UTC (vercel.json). Elegido para no pisar a nadie —
 // 23:55/05:55/11:55/17:55 sync-external-apis, 00:00 balances, 00:05 reportes,
@@ -92,12 +105,83 @@ import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users
 import { syncCustomerAggregates, type AggregatesResult } from '@/lib/crm-sync/aggregates';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
 import { apiError } from '@/lib/api-error';
+import { moduleAllowedForModel } from '@/lib/business-model';
+import { mesesDeLiquidacion, recomputarInsumosComisiones } from '@/lib/hr/insumos-comisiones';
 
 export const maxDuration = 300; // hasta 5 min: la primera corrida es completa
 
 interface CompanyRow {
   id: string;
   name: string | null;
+  /** `companies.business_model`, crudo: lo interpreta business-model.ts. */
+  businessModel: unknown;
+}
+
+/** Lo que dejó el recálculo de la cache de insumos de /comisiones, por mes. */
+interface InsumosComisionesMes {
+  mes: string;
+  filas: number;
+  ms: number;
+  /** `true` = no se corrió porque no quedaba presupuesto de tiempo. */
+  saltado: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El presupuesto del recálculo de insumos de /comisiones (migración 132).
+//
+// LA COTA, Y DE DÓNDE SALE: cada mes corre las dos RPC EN PARALELO, y cada una
+// tiene `statement_timeout = 30s` propio (migraciones 115/121/123). Así que un
+// mes cuesta como máximo ~30 s de RPC + la escritura (una función plpgsql
+// sobre ~126 filas, < 1 s) — sea lento o caiga por timeout, no puede tardar
+// más. Medido en el código existente: el net solo ~2 s, ~16 s con competencia
+// (2026-09-11, cabecera de /comisiones). Los «30-90 s» que ve el dueño en la
+// pantalla son esos 30 s de techo multiplicados por los tres reintentos del
+// cliente, no el costo de un cálculo.
+//
+// Los dos meses van EN SERIE, nunca en paralelo: cuatro RPC sobre el mismo
+// árbol compitiendo entre sí es justo lo que llevó el net de 2 a 16 s. Peor
+// caso por empresa: ~2 × 31 s ≈ 62 s.
+//
+// EL CORTE: antes de cada mes se mira cuánto queda de los 300 s. Si queda
+// menos que la reserva de un mes, NO se corre y se ANOTA en `errors` (un
+// recorte silencioso es indistinguible de «no había nada que hacer», §1.2).
+// La cache de ese mes queda como estaba —vieja pero válida, con su hora en
+// pantalla— y la próxima corrida o el botón «Actualizar» la ponen al día.
+// ─────────────────────────────────────────────────────────────────────────────
+const RESERVA_INSUMOS_POR_MES_MS = 40_000; // 30 s de timeout + escritura + margen
+const MARGEN_RESPUESTA_MS = 10_000; // armar y mandar la respuesta del cron
+
+async function insumosDeComisiones(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  inicioMs: number,
+): Promise<{ meses: InsumosComisionesMes[]; errores: string[] }> {
+  const meses: InsumosComisionesMes[] = [];
+  const errores: string[] = [];
+  const limiteMs = maxDuration * 1000 - MARGEN_RESPUESTA_MS;
+
+  // Anterior primero: es el que se liquida. Si el presupuesto se acaba, que
+  // se pierda el mes en curso.
+  for (const mes of mesesDeLiquidacion(new Date())) {
+    const restanteMs = limiteMs - (Date.now() - inicioMs);
+    if (restanteMs < RESERVA_INSUMOS_POR_MES_MS) {
+      meses.push({ mes, filas: 0, ms: 0, saltado: true });
+      errores.push(
+        `insumos comisiones ${mes}: saltado por presupuesto (quedaban ${Math.round(restanteMs / 1000)} s ` +
+          `y un mes puede tardar ${RESERVA_INSUMOS_POR_MES_MS / 1000} s); la cache queda como estaba`,
+      );
+      continue;
+    }
+    try {
+      const r = await recomputarInsumosComisiones(admin, companyId, mes);
+      meses.push({ mes, filas: r.filas, ms: r.ms, saltado: false });
+      for (const e of r.errores) errores.push(`insumos comisiones ${mes}: ${e}`);
+    } catch (err) {
+      meses.push({ mes, filas: 0, ms: 0, saltado: false });
+      errores.push(`insumos comisiones ${mes}: ${err instanceof Error ? err.message : 'unknown'}`);
+    }
+  }
+  return { meses, errores };
 }
 
 /**
@@ -298,12 +382,18 @@ async function eligibleCompanies(onlyCompanyId?: string | null): Promise<Company
 
   const { data: companies, error } = await admin
     .from('companies')
-    .select('id, name, status')
+    // `business_model` en el MISMO select: decide si la empresa tiene
+    // comisiones (insumos de /comisiones), sin una consulta extra por tenant.
+    .select('id, name, status, business_model')
     .in('id', ids)
     .neq('status', 'inactive');
   if (error) throw new Error(`no se pudo listar companies: ${error.message}`);
 
-  return (companies ?? []).map((c) => ({ id: String(c.id), name: c.name ?? null }));
+  return (companies ?? []).map((c) => ({
+    id: String(c.id),
+    name: c.name ?? null,
+    businessModel: c.business_model,
+  }));
 }
 
 export async function GET(request: NextRequest) {
@@ -368,6 +458,8 @@ export async function GET(request: NextRequest) {
   const desde = new Date(Date.now() - 45 * 60 * 1000).toISOString();
 
   const ranAt = new Date().toISOString();
+  // El reloj del presupuesto de los 300 s (ver `insumosDeComisiones`).
+  const inicioMs = Date.now();
 
   try {
     const companies = await eligibleCompanies(onlyCompanyId);
@@ -390,6 +482,7 @@ export async function GET(request: NextRequest) {
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
       monthlyTotals?: CrmMonthlyTotalsResult | null;
+      insumosComisiones?: InsumosComisionesMes[] | null;
     })[] = [];
     for (const company of companies) {
       try {
@@ -402,6 +495,10 @@ export async function GET(request: NextRequest) {
         // Un único punto de corte, explícito y a la vista, en vez de un `if`
         // por paso repartido por el cuerpo: un recorte silencioso es
         // indistinguible de "no había nada que hacer".
+        //
+        // UNA excepción, también a la vista (2026-10-20): la cache de insumos
+        // de /comisiones va DESPUÉS del bloque `if (!soloEspejo)`, con su
+        // propio `if (soloEspejo || modoCompleto)`. Ver la cabecera.
         //
         // Las variables se declaran acá arriba en null —null es "no se
         // calculó", que NO es lo mismo que 0— para que la respuesta conserve
@@ -427,6 +524,9 @@ export async function GET(request: NextRequest) {
         let behavior: BehaviorResult | null = null;
         let tradingAccounts: TradingAccountsResult | null = null;
         const extraErrors: string[] = [];
+        // La excepción al corte (corre también en espejo): ver más abajo.
+        let insumosComisiones: InsumosComisionesMes[] | null = null;
+        const insumosErrors: string[] = [];
 
         if (!soloEspejo) {
           // Los depósitos de Pay-Pros salen de acá y no del webhook: la URL que
@@ -672,6 +772,32 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        // ── Cache de insumos de /comisiones (migración 132) ───────────────
+        // EL ÚNICO EXTRA QUE TAMBIÉN CORRE EN ?espejo=full (ver la corrección
+        // en la cabecera). Va AL FINAL, después del espejo base y de los demás
+        // extras, porque lee lo que ellos acaban de dejar: el net deposit sale
+        // de los retiros y depósitos espejados, y el PnL de crm_daily_pnl_users
+        // + crm_ib_reward_daily. No va en el modo rápido: cada 15 minutos
+        // serían hasta ~62 s de RPC por empresa para mover un número que la
+        // pantalla igual deja refrescar a mano.
+        //
+        // Sólo empresas cuyo modelo tiene comisiones. La pregunta se le hace
+        // al registro (business-model.ts), no a un `=== 'broker'` suelto: hoy
+        // es exactamente 'broker', y el día que otro modelo tenga equipo
+        // comercial entra solo.
+        //
+        // Aislado como los demás: sus errores (y los meses saltados por
+        // presupuesto) se ANOTAN en la respuesta y nunca tumban el sync.
+        if ((soloEspejo || modoCompleto) && moduleAllowedForModel(company.businessModel, 'commissions')) {
+          try {
+            const r = await insumosDeComisiones(admin, company.id, inicioMs);
+            insumosComisiones = r.meses;
+            insumosErrors.push(...r.errores);
+          } catch (err) {
+            insumosErrors.push(`insumos comisiones: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
+        }
+
         results.push({
           ...res,
           companyName: company.name,
@@ -687,9 +813,11 @@ export async function GET(request: NextRequest) {
           dailyPnl,
           allUsers,
           aggregates,
+          insumosComisiones,
           errors: [
             ...res.errors, ...payprosErrors, ...mt5Errors,
             ...orionErrors, ...expErrors, ...pnlErrors, ...extraErrors,
+            ...insumosErrors,
           ],
         });
       } catch (err) {

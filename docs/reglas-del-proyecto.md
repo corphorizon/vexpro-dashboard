@@ -315,6 +315,14 @@ lo que había**. Es el incidente de agosto 2026.
 no coincide con el grupo padre → confirmación **con nombres** si algún miembro
 tiene ND guardado y quedaría en 0 → confirmación estándar si ya había datos.
 
+**Desde la migración 132 (2026-10-20, septiembre se cerró con grupos a medias):**
+el insumo CRM de los tabs en vivo sale de una **cache** que llena el cron
+(`hr_insumos_comisiones`, `src/lib/hr/insumos-comisiones.ts`) y la pantalla
+muestra su edad con un botón «Actualizar». Y en un mes **abierto**, TODOS los
+Guardar (Equipos, Individual y por fila) quedan deshabilitados mientras el
+insumo no llegó o falló (`src/lib/hr/guardado-comisiones.ts`). Cache vieja SÍ
+deja guardar: es dato válido con su hora a la vista.
+
 ---
 
 ## 7. Hallazgos abiertos

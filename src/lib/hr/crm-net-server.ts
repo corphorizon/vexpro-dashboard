@@ -18,13 +18,24 @@ import type { RollupProfile } from './net-deposit';
 // Las tres devuelven `null` cuando fallan, NUNCA `[]`: una lista vacía muda es
 // indistinguible de un cruce roto (§1.2). El llamador decide si eso es un 502 o
 // un slice `partial`.
+//
+// Desde la migración 132 /comisiones ya NO las corre por visita: las corre
+// `recomputarInsumosComisiones` (src/lib/hr/insumos-comisiones.ts) desde el
+// cron y el botón «Actualizar», y la pantalla lee la cache. Las RPC siguen
+// siendo éstas; no hay una segunda copia de ninguna.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** PostgREST corta en 1.000 filas SIN AVISAR. Hoy hay 126 perfiles. */
 const PAGE = 1000;
 
-/** Lo que devuelve la RPC `hr_net_deposit_by_profile`. `profile_id` NULL = huérfanos. */
-export type CrmNetRow = { profile_id: string | null; net: number | string };
+/**
+ * Lo que devuelve la RPC `hr_net_deposit_by_profile`. `profile_id` NULL = huérfanos.
+ *
+ * `clients` existe en la firma desde la 121 y nadie lo leía; desde la 132 lo
+ * guarda la cache de insumos (`nd_clients`). Opcional porque las filas que
+ * reconstruye la cache para el árbol no lo necesitan.
+ */
+export type CrmNetRow = { profile_id: string | null; net: number | string; clients?: number | string | null };
 
 /**
  * TODOS los perfiles comerciales, incluidos los despedidos: un BDM que se fue

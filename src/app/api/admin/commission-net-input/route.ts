@@ -2,10 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
-import { buildRollup, monthToFirstDay } from '@/lib/hr/net-deposit';
+import { buildRollup } from '@/lib/hr/net-deposit';
 import { indexarNetDelCrm } from '@/lib/hr/net-deposit-input';
 import { separarNetDelCrm } from '@/lib/hr/overview';
-import { leerNetDelCrm, leerPerfilesComerciales, leerPnlInputDelCrm } from '@/lib/hr/crm-net-server';
+import { leerPerfilesComerciales } from '@/lib/hr/crm-net-server';
+import {
+  computedAtMasViejo,
+  leerInsumosDeCache,
+  parseMesInsumos,
+  recomputarInsumosComisiones,
+  type InsumosDelMes,
+} from '@/lib/hr/insumos-comisiones';
 import { round2 } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,14 +55,35 @@ import { round2 } from '@/lib/utils';
 // El trabajo pesado (la RPC del rollup) y el paginado de perfiles salen del
 // registro único src/lib/hr/crm-net-server.ts; el árbol, de buildRollup. No hay
 // una segunda implementación de nada de eso acá.
+//
+// ── DESDE LA MIGRACIÓN 132 LEE DE LA CACHE (dueño, 2026-10-20) ─────────────
+// Las dos RPC corrían acá, EN VIVO, en cada visita. Con 30 s de timeout cada
+// una y tres reintentos del cliente, una visita mala eran ~95 s de «Cargando…»
+// y después «sin datos» — y quien guardaba en esa ventana fijaba insumos a
+// medias (septiembre se cerró así). Ahora:
+//   · CACHE HIT: un select por (empresa, mes) en `hr_insumos_comisiones` + los
+//     perfiles en vivo (126 filas). Lo que tarda un select.
+//   · CACHE MISS (tenant nuevo, mes viejo que el cron no recorre, o el ND de
+//     ese mes nunca salió bien): calcula EN VIVO como antes, ESCRIBE la cache
+//     con `recomputarInsumosComisiones` y responde. Es el fallback documentado,
+//     no un camino secreto: la respuesta dice `fuente: 'en_vivo'`.
+//   · LA CACHE NO SE PUEDE LEER (la 132 todavía no aplicada, o la tabla
+//     falla): mismo fallback; si tampoco se puede escribir, responde con lo
+//     que dieron las RPC. El deploy no depende del orden con la migración.
+// Quien la llena: el cron sync-crm (mes en curso + anterior) y el botón
+// «Actualizar» (POST ./refresh). La respuesta lleva `computed_at`: la hora
+// del dato MÁS VIEJO en pantalla (ver `computedAtMasViejo`).
+//
+// LA INVERSIÓN DEL SIGNO SIGUE ACÁ, y SÓLO ACÁ: la cache guarda el `pnl_crm`
+// crudo, exactamente como la RPC, y esta ruta lo da vuelta al responder —
+// venga de la cache o en vivo, por el mismo `armarRespuesta`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const dynamic = 'force-dynamic';
 /**
- * La RPC del net tarda ~2 s con 21.182 clientes (migración 115: índices +
- * timeout). La del PnL corre EN PARALELO con ella y con el paginado de
- * perfiles, así que el techo sigue siendo el de la más lenta, no la suma. Las
- * dos RPC tienen `statement_timeout = 30s` propio.
+ * Cache hit: un select. Cache miss: las dos RPC EN PARALELO (cada una con
+ * `statement_timeout = 30s` propio, así que el techo es ~30 s, no la suma) +
+ * la escritura de la cache + una relectura. Entra en 60.
  */
 export const maxDuration = 60;
 
@@ -70,11 +98,44 @@ function numeroOrNull(v: number | string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** `2026-07` o `2026-07-01`; cualquier otra cosa se rechaza. */
-function parseMonth(raw: string | null): string | null {
-  if (!raw) return null;
-  if (!/^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/.test(raw)) return null;
-  return monthToFirstDay(raw);
+/**
+ * Los insumos del mes: de la cache si está, y si no, calculados en vivo (y
+ * dejados en la cache para la próxima). Ver la cabecera.
+ */
+async function obtenerInsumos(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  month: string,
+): Promise<{ insumos: InsumosDelMes; fuente: 'cache' | 'en_vivo' }> {
+  const cache = await leerInsumosDeCache(admin, companyId, month);
+  if (cache.estado === 'ok') return { insumos: cache.insumos, fuente: 'cache' };
+
+  if (cache.estado === 'error') {
+    console.warn(`[commission-net-input] cache ilegible para ${month}; se calcula en vivo`);
+  }
+
+  const r = await recomputarInsumosComisiones(admin, companyId, month);
+  if (r.escrito) {
+    // Se relee en vez de usar `r.crudos`: si sólo una métrica salió bien, la
+    // cache puede tener la otra de un cálculo anterior (merge por columna), y
+    // la respuesta tiene que ser lo que quedó guardado, no lo que dio esta
+    // corrida.
+    const re = await leerInsumosDeCache(admin, companyId, month);
+    if (re.estado === 'ok') return { insumos: re.insumos, fuente: 'en_vivo' };
+  }
+
+  // La cache no se pudo escribir o releer: se responde con lo que dieron las
+  // RPC, exactamente como antes de la 132.
+  const ahora = new Date().toISOString();
+  return {
+    insumos: {
+      netRows: r.crudos.netRows,
+      pnlRows: r.crudos.pnlRows,
+      ndComputedAt: r.crudos.netRows ? ahora : null,
+      pnlComputedAt: r.crudos.pnlRows ? ahora : null,
+    },
+    fuente: 'en_vivo',
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -82,7 +143,7 @@ export async function GET(request: NextRequest) {
     const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['commissions'] });
     if (auth instanceof NextResponse) return auth;
 
-    const month = parseMonth(new URL(request.url).searchParams.get('month'));
+    const month = parseMesInsumos(new URL(request.url).searchParams.get('month'));
     if (!month) {
       return NextResponse.json({ error: 'month inválido (se espera YYYY-MM)' }, { status: 400 });
     }
@@ -90,13 +151,14 @@ export async function GET(request: NextRequest) {
     const admin = createAdminClient();
     const companyId = auth.companyId;
 
-    // Las tres lecturas en paralelo: son independientes entre sí y la del PnL
-    // no puede empujar el tiempo de respuesta de las otras dos.
-    const [profiles, netRows, pnlRows] = await Promise.all([
+    // Los perfiles y los insumos en paralelo: son independientes. Los perfiles
+    // van SIEMPRE en vivo (la estructura es la que la pantalla usa en todo lo
+    // demás; ver la cabecera de la migración 132).
+    const [profiles, { insumos, fuente }] = await Promise.all([
       leerPerfilesComerciales(admin, companyId),
-      leerNetDelCrm(admin, companyId, month),
-      leerPnlInputDelCrm(admin, companyId, month),
+      obtenerInsumos(admin, companyId, month),
     ]);
+    const { netRows, pnlRows } = insumos;
 
     // Sin cualquiera de los dos NO se devuelve un árbol en cero: el cliente
     // trataría eso como "este mes no produjo nadie" y le metería $0 al motor.
@@ -127,6 +189,15 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       month,
+      // La hora del dato MÁS VIEJO en pantalla (el ND y el PnL pueden tener
+      // edades distintas por el merge por columna). La pantalla la muestra
+      // como «CRM calculado hace X min».
+      computed_at: computedAtMasViejo(insumos.ndComputedAt, pnlRows ? insumos.pnlComputedAt : null),
+      nd_computed_at: insumos.ndComputedAt,
+      pnl_computed_at: pnlRows ? insumos.pnlComputedAt : null,
+      // 'cache' = lo dejó el cron o «Actualizar»; 'en_vivo' = cache miss, se
+      // calculó en esta request (y quedó guardado).
+      fuente,
       // Plano y no el árbol: el cliente lo consume como índice por perfil. El
       // árbol completo lo sigue devolviendo /api/admin/hr-net-deposit-rollup,
       // que es el que dibuja la estructura.

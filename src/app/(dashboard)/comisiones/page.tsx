@@ -100,6 +100,10 @@ import { bdmsConEquipo, pctEsFijoDePerfil, tieneEquipoPropio } from '@/lib/hr/do
 // Master IB y el fallback de lectura viven enteros en hr/pnl-buckets.ts.
 // TODA escritura y TODA lectura de PnL de esta página pasa por acá.
 import { bucketDePnl, filaPnlVigente } from '@/lib/hr/pnl-buckets';
+// El guard de guardado con el insumo CRM a medio llegar y la frescura de la
+// cache (migración 132). La regla vive entera allá, con su test.
+import { edadDelCalculo, motivoBloqueoGuardado, type MotivoBloqueoGuardado } from '@/lib/hr/guardado-comisiones';
+import { roleCanWriteHr } from '@/lib/roles';
 import {
   Calculator,
   Save,
@@ -515,6 +519,9 @@ export default function ComisionesPage() {
     index: Map<string, { own: number; total: number }>;
     /** Insumo del grupo PnL. `null` = la RPC del PnL falló (el net deposit igual sirve). */
     pnl: Map<string, PnlCrmEntry> | null;
+    /** Hora del cálculo (el dato MÁS VIEJO en pantalla), de la cache de la
+        migración 132. `null` = el endpoint no la mandó: no se muestra edad. */
+    computedAt: string | null;
   } | null>(null);
   const [crmNetLoading, setCrmNetLoading] = useState(false);
   const [crmNetError, setCrmNetError] = useState(false);
@@ -527,8 +534,15 @@ export default function ComisionesPage() {
   // RPC. Vive lo que vive la pantalla, y la clave lleva la empresa porque una
   // caché con clave global es cómo el usuario siguiente ve los datos del anterior.
   const crmNetCache = useRef(
-    new Map<string, { index: Map<string, { own: number; total: number }>; pnl: Map<string, PnlCrmEntry> | null }>(),
+    new Map<string, {
+      index: Map<string, { own: number; total: number }>;
+      pnl: Map<string, PnlCrmEntry> | null;
+      computedAt: string | null;
+    }>(),
   );
+  /** El POST de «Actualizar» está en curso (migración 132). Mientras tanto
+      el guard de guardado bloquea: los números están por cambiar. */
+  const [refrescandoCrm, setRefrescandoCrm] = useState(false);
 
   useEffect(() => {
     if (!company?.id) return;
@@ -536,7 +550,7 @@ export default function ComisionesPage() {
     const clave = `${company.id}:${autoMonth}`;
     const cacheado = crmNetCache.current.get(clave);
     if (cacheado) {
-      setCrmNet({ month: autoMonth, index: cacheado.index, pnl: cacheado.pnl });
+      setCrmNet({ month: autoMonth, index: cacheado.index, pnl: cacheado.pnl, computedAt: cacheado.computedAt });
       setCrmNetError(false);
       setCrmPnlError(cacheado.pnl === null);
       return;
@@ -560,7 +574,11 @@ export default function ComisionesPage() {
         if (cancelado) return;
         if (ESPERAS_MS[intento] > 0) await new Promise((r) => setTimeout(r, ESPERAS_MS[intento]));
         try {
-          const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`);
+          // Desde la migración 132 esto es un select a la cache y vuelve en lo
+          // que tarda un select. El timeout largo es para el CACHE MISS (mes
+          // que el cron no recorre): ahí el endpoint calcula en vivo —hasta
+          // ~30 s— y los 25 s por defecto de apiFetch lo cortarían a mitad.
+          const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`, { timeoutMs: 65_000 });
           const json = await res.json();
           if (!res.ok) throw new Error(json?.error || 'commission-net-input failed');
           const index = new Map<string, { own: number; total: number }>(
@@ -573,9 +591,10 @@ export default function ComisionesPage() {
           // `pnlEntries: null` + `pnlError` en vez de tumbar todo. Se cachea el
           // null igual (es el resultado de este mes) y la pantalla lo dice aparte.
           const pnl = indexarPnlDelCrm(json);
-          crmNetCache.current.set(clave, { index, pnl });
+          const computedAt = typeof json?.computed_at === 'string' ? (json.computed_at as string) : null;
+          crmNetCache.current.set(clave, { index, pnl, computedAt });
           if (!cancelado) {
-            setCrmNet({ month: autoMonth, index, pnl });
+            setCrmNet({ month: autoMonth, index, pnl, computedAt });
             setCrmPnlError(pnl === null);
             setCrmNetLoading(false);
           }
@@ -624,6 +643,92 @@ export default function ComisionesPage() {
     () => (crmNet && crmNet.month === autoMonth ? crmNet.index : null),
     [crmNet, autoMonth],
   );
+
+  // ═══════════════════════════════════════════════════════════
+  // CACHE DEL INSUMO CRM — frescura, «Actualizar» y guard de guardado
+  // (dueño, 2026-10-20, migración 132)
+  //
+  // El insumo ya no se calcula por visita: lo deja el cron en una cache y el
+  // GET la lee. Eso trae dos cosas a esta pantalla:
+  //   · el dato tiene EDAD → se muestra («CRM calculado hace X min») y se
+  //     puede pedir el de ahora («Actualizar», POST …/refresh). Encaja en el
+  //     mismo mecanismo de reintentos de sept: el refresh recalcula en el
+  //     servidor, borra la clave del caché local y sube `crmNetIntento`, que
+  //     re-dispara el MISMO efecto de carga. No hay un segundo fetch.
+  //   · el GUARD: con el insumo del mes abierto a medio llegar (cargando,
+  //     actualizando o fallido) los botones de Guardar quedan deshabilitados
+  //     y dicen por qué. Septiembre se cerró con grupos a medias por guardar
+  //     en esa ventana. La regla es pura y tiene test
+  //     (hr/guardado-comisiones.ts); acá sólo se le pasa el estado.
+  // ═══════════════════════════════════════════════════════════
+
+  const estadoInsumoCrm = {
+    usaAutomatico: periodoUsaAutomatico,
+    cargando: crmNetLoading,
+    refrescando: refrescandoCrm,
+    ndListo: ndIndexNeto !== null,
+    pnlListo: pnlCrmIndex !== null,
+  };
+  const textoBloqueo = (m: MotivoBloqueoGuardado | null): string | null =>
+    m === 'esperando' ? t('comm.saveBlockedWaiting')
+      : m === 'sin-nd' ? t('comm.saveBlockedNoNd')
+        : m === 'sin-pnl' ? t('comm.saveBlockedNoPnl')
+          : null;
+  /** Guardados que escriben NET DEPOSIT (tab Equipos, fila ND de Individual). */
+  const bloqueoGuardarNd = textoBloqueo(motivoBloqueoGuardado(estadoInsumoCrm, { nd: true, pnl: false }));
+  /** Guardados que escriben PnL (filas PnL y PnL Especial de Individual). */
+  const bloqueoGuardarPnl = textoBloqueo(motivoBloqueoGuardado(estadoInsumoCrm, { nd: false, pnl: true }));
+
+  /** Reloj de la edad del cálculo: un tic por minuto alcanza para «hace X min». */
+  const [ahoraMs, setAhoraMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!periodoUsaAutomatico) return;
+    const id = setInterval(() => setAhoraMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [periodoUsaAutomatico]);
+
+  const edadCrm = crmNet && crmNet.month === autoMonth ? edadDelCalculo(crmNet.computedAt, ahoraMs) : null;
+  const textoEdadCrm = !edadCrm
+    ? null
+    : edadCrm.unidad === 'recien' ? t('comm.crmComputedJustNow')
+      : edadCrm.unidad === 'min' ? t('comm.crmComputedAgoMin', { n: String(edadCrm.n) })
+        : edadCrm.unidad === 'h' ? t('comm.crmComputedAgoHours', { n: String(edadCrm.n) })
+          : t('comm.crmComputedAgoDays', { n: String(edadCrm.n) });
+
+  /** El POST lo rechaza con 403 a quien no escribe HR: el botón no se dibuja. */
+  const puedeActualizarCrm = roleCanWriteHr(user?.effective_role ?? '');
+
+  const actualizarInsumoCrm = useCallback(async () => {
+    if (!company?.id || !autoMonth) return;
+    setRefrescandoCrm(true);
+    try {
+      // Hasta ~30 s de RPC en el servidor (las dos en paralelo, 30 s de
+      // statement_timeout cada una): los 25 s por defecto no alcanzan.
+      const res = await apiFetch('/api/admin/commission-net-input/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ month: `${autoMonth}-01` }),
+        timeoutMs: 75_000,
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) throw new Error('refresh failed');
+      const errores = Array.isArray(json.errores) ? json.errores.length : 0;
+      // Una métrica que no llegó quedó con el cálculo anterior (merge por
+      // columna en el servidor): se AVISA, no es un éxito mudo.
+      setToast(errores > 0
+        ? { type: 'error', msg: t('comm.crmRefreshPartial', { n: String(errores) }) }
+        : { type: 'success', msg: t('comm.crmRefreshOk') });
+      setTimeout(() => setToast(null), errores > 0 ? 8000 : 4000);
+      // El MISMO camino que «Reintentar»: fuera la clave local y otra vuelta
+      // del efecto de carga, que ahora lee la cache recién escrita.
+      crmNetCache.current.delete(`${company.id}:${autoMonth}`);
+      setCrmNetIntento((n) => n + 1);
+    } catch {
+      setToast({ type: 'error', msg: t('comm.crmRefreshFailed') });
+      setTimeout(() => setToast(null), 8000);
+    } finally {
+      setRefrescandoCrm(false);
+    }
+  }, [company?.id, autoMonth, t]);
 
   /**
    * El insumo resuelto de CADA perfil, con su procedencia.
@@ -1526,6 +1631,15 @@ export default function ComisionesPage() {
   const handleSaveBdm = useCallback(async (profileId: string, mode: 'nd' | 'pnl' | 'pnlSpecial') => {
     if (!selectedPeriod || !company) return;
 
+    // Guard de guardado (migración 132). El botón ya viene deshabilitado; esto
+    // es la segunda capa, por si el handler se llama por otro camino.
+    const bloqueo = mode === 'nd' ? bloqueoGuardarNd : bloqueoGuardarPnl;
+    if (bloqueo) {
+      setToast({ type: 'error', msg: bloqueo });
+      setTimeout(() => setToast(null), 6000);
+      return;
+    }
+
     setSavingBdm((prev) => new Set(prev).add(profileId));
     try {
       const profile = commercialProfiles.find((p) => p.id === profileId);
@@ -1672,7 +1786,7 @@ export default function ComisionesPage() {
     } finally {
       setSavingBdm((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
     }
-  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, pnlSpecialCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults, getPctOverride]);
+  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, pnlSpecialCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults, getPctOverride, bloqueoGuardarNd, bloqueoGuardarPnl]);
 
   // ─── Recalcular histórico de perfiles en PnL Especial (admin-only) ───
   //
@@ -1906,7 +2020,10 @@ export default function ComisionesPage() {
         //    siguiente rompería la cadena en un punto y nadie lo vería.
         let entradas: Map<string, PnlCrmEntry> | null = null;
         try {
-          const res = await apiFetch(`/api/admin/commission-net-input?month=${mes.key}`);
+          // Meses viejos: casi siempre CACHE MISS (el cron sólo recorre el mes
+          // en curso y el anterior), así que el endpoint calcula en vivo —hasta
+          // ~30 s— y deja la cache escrita. Los 25 s por defecto lo cortarían.
+          const res = await apiFetch(`/api/admin/commission-net-input?month=${mes.key}`, { timeoutMs: 65_000 });
           const json = await res.json();
           entradas = res.ok ? indexarPnlDelCrm(json) : null;
         } catch {
@@ -2019,8 +2136,24 @@ export default function ComisionesPage() {
     }
   }, [user, company, selectedPeriod, sortedPeriods, pnlBdms, pnlSpecialBdms, monthlyResults, refresh, t]);
 
+  /**
+   * El guard del «Guardar» de abajo. El tab Equipos escribe sólo net deposit;
+   * Individual escribe ND y, si hay perfiles PnL, también PnL — y ahí un PnL
+   * que no llegó también bloquea, porque se guardaría junto con el resto.
+   */
+  const bloqueoGuardarTodo = tab === 'teams'
+    ? bloqueoGuardarNd
+    : textoBloqueo(motivoBloqueoGuardado(estadoInsumoCrm, { nd: true, pnl: pnlBdms.length > 0 }));
+
   const handleSave = async () => {
     if (!selectedPeriod || !company) return;
+
+    // Guard de guardado (migración 132): segunda capa detrás del `disabled`.
+    if (bloqueoGuardarTodo) {
+      setToast({ type: 'error', msg: bloqueoGuardarTodo });
+      setTimeout(() => setToast(null), 6000);
+      return;
+    }
 
     // Si hay un warning de validación (el total del equipo no coincide
     // con lo que el grupo padre registró), bloquear el guardado
@@ -2610,6 +2743,7 @@ export default function ComisionesPage() {
   const ndRowActions = ({ calc, profile }: NdRow) => (
     <RowActionButtons
       saving={savingBdm.has(calc.profileId)}
+      saveBlockedReason={bloqueoGuardarNd}
       onSave={() => handleSaveBdm(calc.profileId, 'nd')}
       onPdf={() => verify2FA(async () => {
         if (!selectedPeriod) return;
@@ -2650,6 +2784,7 @@ export default function ComisionesPage() {
   const pnlRowActions = ({ calc, profile }: PnlRow) => (
     <RowActionButtons
       saving={savingBdm.has(calc.profileId)}
+      saveBlockedReason={bloqueoGuardarPnl}
       onSave={() => handleSaveBdm(calc.profileId, 'pnl')}
       onPdf={() => verify2FA(async () => {
         if (!selectedPeriod) return;
@@ -2692,6 +2827,7 @@ export default function ComisionesPage() {
   const pnlSpecialRowActions = ({ calc, profile }: PnlSpecialRow) => (
     <RowActionButtons
       saving={savingBdm.has(calc.profileId)}
+      saveBlockedReason={bloqueoGuardarPnl}
       onSave={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
       onPdf={() => verify2FA(async () => {
         if (!selectedPeriod) return;
@@ -2868,7 +3004,28 @@ export default function ComisionesPage() {
               }
             />
           ) : (
-            <Notice kind="info" title={t('comm.ndInputAutoNotice')} />
+            // La edad del cálculo y «Actualizar» viven en ESTE aviso, el del
+            // estado del insumo, y no en un banner aparte (migración 132): es
+            // la misma pregunta —¿de dónde y de cuándo es este número?— y el
+            // «Reintentar» del fallo ya está en el aviso de al lado.
+            <Notice
+              kind="info"
+              title={t('comm.ndInputAutoNotice')}
+              action={puedeActualizarCrm ? (
+                <button
+                  type="button"
+                  onClick={actualizarInsumoCrm}
+                  disabled={refrescandoCrm}
+                  title={t('comm.crmRefreshHint')}
+                  className="inline-flex items-center gap-1.5 underline hover:opacity-80 disabled:no-underline disabled:opacity-60"
+                >
+                  <RefreshCw aria-hidden className={`size-3.5 ${refrescandoCrm ? 'animate-spin' : ''}`} />
+                  {refrescandoCrm ? t('comm.crmRefreshing') : t('comm.crmRefresh')}
+                </button>
+              ) : undefined}
+            >
+              {textoEdadCrm}
+            </Notice>
           )}
           {/* El PnL se avisa APARTE: puede fallar su RPC sin que falle la del
               net deposit, y decir "falló el CRM" a secas haría dudar de los 120
@@ -3169,15 +3326,27 @@ export default function ComisionesPage() {
         {/* Disable while EITHER the master save OR any per-row save is in
             flight. Skipping the per-row check let users hit Guardar mid-save
             of a single BDM, which races the two updates and can leave one
-            with stale data. */}
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving || savingBdm.size > 0}
-          className="inline-flex h-10 items-center gap-2 rounded-ui-md bg-primary px-5 text-[13px] font-semibold text-brand-on-primary shadow-2 hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,black)] disabled:pointer-events-none disabled:opacity-50"
-        >
-          <Save aria-hidden className="size-4" />{saving ? t('comm.saving') : t('comm.save')}
-        </button>
+            with stale data.
+            Y con el insumo CRM del mes abierto a medio llegar (migración 132,
+            septiembre se cerró así): deshabilitado y diciendo por qué. El
+            motivo va también como TEXTO al lado y no sólo en el `title`: el
+            botón lleva `disabled:pointer-events-none`, y un tooltip que no
+            aparece es un aviso que no existe. */}
+        {bloqueoGuardarTodo && !toast && (
+          <span role="status" className="max-w-[420px] text-right text-[12px] text-text-2">
+            {bloqueoGuardarTodo}
+          </span>
+        )}
+        <span title={bloqueoGuardarTodo ?? undefined} className="inline-flex">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || savingBdm.size > 0 || !!bloqueoGuardarTodo}
+            className="inline-flex h-10 items-center gap-2 rounded-ui-md bg-primary px-5 text-[13px] font-semibold text-brand-on-primary shadow-2 hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,black)] disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Save aria-hidden className="size-4" />{saving ? t('comm.saving') : t('comm.save')}
+          </button>
+        </span>
       </div>
     </div>
   );

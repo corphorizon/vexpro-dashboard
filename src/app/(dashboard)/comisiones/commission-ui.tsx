@@ -239,24 +239,36 @@ export function RowActionButtons({
   saving,
   onSave,
   onPdf,
+  saveBlockedReason = null,
 }: {
   saving: boolean;
   onSave: () => void;
   onPdf: () => void;
+  /**
+   * Guard de guardado (migración 132, hr/guardado-comisiones.ts): con el
+   * insumo CRM a medio llegar el botón queda deshabilitado y el `title` dice
+   * por qué. `null` = se puede guardar.
+   */
+  saveBlockedReason?: string | null;
 }) {
   const { t } = useI18n();
+  const guardar = (
+    <button
+      type="button"
+      onClick={onSave}
+      disabled={saving || !!saveBlockedReason}
+      aria-label={saveBlockedReason ?? t('comm.saveBdm')}
+      title={saveBlockedReason ?? t('comm.saveBdm')}
+      className={ICON_BTN}
+    >
+      {saving ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <Save aria-hidden className="size-4" />}
+    </button>
+  );
   return (
     <>
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving}
-        aria-label={t('comm.saveBdm')}
-        title={t('comm.saveBdm')}
-        className={ICON_BTN}
-      >
-        {saving ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <Save aria-hidden className="size-4" />}
-      </button>
+      {/* ICON_BTN lleva `disabled:pointer-events-none`: un botón deshabilitado
+          no muestra su propio `title`. El span lo muestra por él. */}
+      {saveBlockedReason ? <span title={saveBlockedReason} className="inline-flex">{guardar}</span> : guardar}
       <button type="button" onClick={onPdf} aria-label={t('comm.downloadPdf')} title={t('comm.downloadPdf')} className={ICON_BTN}>
         <FileText aria-hidden className="size-4" />
       </button>
