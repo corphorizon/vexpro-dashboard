@@ -1,3 +1,4 @@
+import { ARCHIVE_MODE } from '@/lib/archive-mode';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
@@ -90,6 +91,30 @@ async function captureSentry(
   }
 }
 
+/**
+ * Respuesta en modo archivo: lee (credenciales) pero no escribe nada.
+ * Firma válida → errorCode 0 (recibido, no se reintenta); inválida → 1;
+ * ilegible → 2 sin campos, igual que el flujo normal.
+ */
+async function archivedAck(request: NextRequest, companyId: string, ip: string): Promise<NextResponse> {
+  const creds = await resolvePayprosCredentials(companyId);
+  if (!creds) return new NextResponse('Not found', { status: 404 });
+  const rawBody = await request.text();
+  const parsed = parseOutgoing(rawBody);
+  await captureSentry(
+    'paypros: aviso recibido con Smart Dashboard archivado (NO guardado)',
+    { companyId, ip, rawBody, notifyReference: parsed?.notifyReference ?? null },
+    'warning',
+  );
+  if (!parsed) return textPlain(buildUnparseableResponse(creds.signKey, creds.apiKey));
+  const check = verifyOutgoingSignature(parsed, creds.signKey);
+  if (!check.valid) return textPlain(buildIngoingResponse(1, parsed, creds.signKey, creds.apiKey));
+  console.warn(
+    `[paypros-webhook] ARCHIVADO: acuso recibo sin guardar company=${companyId} notifyReference=${parsed.notifyReference} uid=${parsed.uid}`,
+  );
+  return textPlain(signedWith(0, parsed, creds.signKey, creds.apiKey, check.variant));
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
@@ -108,6 +133,15 @@ export async function POST(
       console.warn(`[paypros-webhook] SECURITY token desconocido desde ip=${ip}`);
       return new NextResponse('Not found', { status: 404 });
     }
+
+    // ── MODO ARCHIVO (src/lib/archive-mode.ts, 2026-10-20) ──────────────
+    // Smart Dashboard no recibe datos nuevos. NO se responde 410: Pay-Pros
+    // lee cualquier cosa distinta de 200 + ingoing firmado como entrega
+    // fallida y reintenta. Se acusa recibo firmado SIN escribir en la base
+    // (ni el evento crudo ni el contador del rate limit) y el body queda en
+    // el log y en Sentry, por si un aviso tardío hay que cargarlo a mano en
+    // Atlas. Lo correcto es repuntar o dar de baja el webhook en Pay-Pros.
+    if (ARCHIVE_MODE) return await archivedAck(request, companyId, ip);
 
     const admin = createAdminClient();
 

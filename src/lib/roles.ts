@@ -17,6 +17,8 @@
 // exige una migración.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { ARCHIVE_MODE } from '@/lib/archive-mode';
+
 export const BUILT_IN_ROLES = [
   'admin',
   'socio',
@@ -110,6 +112,7 @@ export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
 export const PAYMENT_ORDER_PREPARE_ROLES = ['admin', 'auditor', 'hr'] as const;
 
 export function roleCanPreparePaymentOrder(role: string): boolean {
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   return role === 'superadmin' || (PAYMENT_ORDER_PREPARE_ROLES as readonly string[]).includes(role);
 }
 
@@ -167,6 +170,7 @@ export function roleCanReadWithdrawalReview(role: string): boolean {
 
 /** Escalar o dejar pendiente: no mueve dinero, sólo marca el caso. */
 export function roleCanTriageWithdrawal(role: string): boolean {
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   return roleCanReadWithdrawalReview(role);
 }
 
@@ -180,6 +184,7 @@ export function roleCanWriteFinance(role: string): boolean {
   // 'superadmin' (no figura en FINANCE_ROLES porque esa lista alimenta el
   // CHECK de company_users), pero el servidor lo trata como 'admin' en toda
   // ruta de finanzas — mismo criterio que canAdd/canEdit en auth-context.
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   return role === 'superadmin' || (FINANCE_ROLES as readonly string[]).includes(role);
 }
 
@@ -190,5 +195,6 @@ export function roleCanWriteFinance(role: string): boolean {
  * (2026-10-20, migración 132).
  */
 export function roleCanWriteHr(role: string): boolean {
+  if (ARCHIVE_MODE) return false; // modo archivo: nadie escribe (archive-mode.ts)
   return role === 'superadmin' || (HR_ROLES as readonly string[]).includes(role);
 }

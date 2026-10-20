@@ -135,7 +135,11 @@ describe('textos', () => {
   });
 
   it('el español es el pedido literal, con tuteo', () => {
-    expect(translations.es['atlasMigration.title']).toBe('Nos mudamos a Atlas');
+    expect(translations.es['atlasMigration.title']).toBe('Smart Dashboard está archivado');
+    // Modo archivo (2026-10-20): el texto pedido, con la fecha de corte como {date}.
+    expect(translations.es['atlasMigration.banner']).toBe(
+      'Smart Dashboard está archivado: solo consulta, con los datos hasta el {date}. Todo el trabajo sigue en Atlas:',
+    );
     expect(translations.es['atlasMigration.goToAtlas']).toBe('Ir a Atlas');
     expect(translations.es['atlasMigration.stayHere']).toBe('Seguir aquí (solo consulta)');
     expect(translations.es['atlasMigration.body2']).toBe(

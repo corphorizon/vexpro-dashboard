@@ -12,10 +12,21 @@ import {
   ATLAS_URL,
   dismissAtlasNotice,
   isAtlasNoticeDismissed,
-  isMigratedToAtlas,
 } from '@/lib/atlas-migration';
+import { ARCHIVE_CUTOFF_DATE, archiveNoticeVisible } from '@/lib/archive-mode';
+
+/** Sin empresa activa (superadmin en el panel) el «ya lo vi» va a esta llave. */
+const NO_COMPANY_KEY = 'sin-empresa';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// «Smart Dashboard está archivado» — banner fijo + modal al entrar.
+//
+// MODO ARCHIVO (2026-10-20, src/lib/archive-mode.ts): el aviso lo ven TODAS
+// las empresas, incluidas Exura Prime y Exura Liquidez, y también el
+// superadmin sin empresa activa. El texto lleva la fecha de corte. Lo de
+// abajo describe el criterio anterior (sólo las 6 migradas), que vuelve a
+// regir si alguna vez se apaga el modo archivo.
+//
 // «Nos mudamos a Atlas» — banner fijo + modal al entrar (2026-10-20).
 //
 // Decide por la empresa ACTIVA (`useData().company`): para un usuario normal
@@ -34,7 +45,7 @@ import {
 /** Banner fijo arriba, dentro del contenedor sticky de la topbar. */
 export function AtlasMigrationBanner() {
   const { company } = useData();
-  if (!isMigratedToAtlas(company?.id)) return null;
+  if (!archiveNoticeVisible(company?.id)) return null;
   return <AtlasMigrationBannerView />;
 }
 
@@ -50,7 +61,7 @@ export function AtlasMigrationBannerView() {
       <div className="flex min-w-0 items-center gap-2">
         <Info aria-hidden className="size-4 shrink-0 text-info" strokeWidth={2} />
         <span className="min-w-0">
-          {t('atlasMigration.banner')}{' '}
+          {t('atlasMigration.banner', { date: ARCHIVE_CUTOFF_DATE })}{' '}
           <a
             href={ATLAS_URL}
             target="_blank"
@@ -82,20 +93,23 @@ export function AtlasMigrationModal() {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const userId = user?.id ?? null;
-  const companyId = company?.id ?? null;
+  const rawCompanyId = company?.id ?? null;
+  // En modo archivo el aviso también sale sin empresa activa; la llave del
+  // «ya lo vi» necesita algo estable.
+  const companyId = rawCompanyId ?? NO_COMPANY_KEY;
 
   // sessionStorage sólo existe en el navegador: se decide en un effect para
   // no romper la hidratación.
   useEffect(() => {
-    if (!userId || !companyId || !isMigratedToAtlas(companyId)) {
+    if (!userId || !archiveNoticeVisible(rawCompanyId)) {
       setOpen(false);
       return;
     }
     setOpen(!isAtlasNoticeDismissed(userId, companyId));
-  }, [userId, companyId]);
+  }, [userId, companyId, rawCompanyId]);
 
   const close = () => {
-    if (userId && companyId) dismissAtlasNotice(userId, companyId);
+    if (userId) dismissAtlasNotice(userId, companyId);
     setOpen(false);
   };
 
@@ -173,7 +187,7 @@ export function AtlasMigrationDialogView({
             {t('atlasMigration.title')}
           </h2>
           <p id="atlas-migration-body" className="mb-6 text-sm leading-6 text-text-2">
-            {t('atlasMigration.body1')}{' '}
+            {t('atlasMigration.body1', { date: ARCHIVE_CUTOFF_DATE })}{' '}
             <a
               href={ATLAS_URL}
               target="_blank"

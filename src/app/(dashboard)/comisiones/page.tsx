@@ -102,6 +102,7 @@ import { bdmsConEquipo, pctEsFijoDePerfil, tieneEquipoPropio } from '@/lib/hr/do
 import { bucketDePnl, filaPnlVigente } from '@/lib/hr/pnl-buckets';
 // El guard de guardado con el insumo CRM a medio llegar y la frescura de la
 // cache (migración 132). La regla vive entera allá, con su test.
+import { ARCHIVE_MODE } from '@/lib/archive-mode';
 import { edadDelCalculo, motivoBloqueoGuardado, type MotivoBloqueoGuardado } from '@/lib/hr/guardado-comisiones';
 import { roleCanWriteHr } from '@/lib/roles';
 import {
@@ -669,8 +670,11 @@ export default function ComisionesPage() {
     ndListo: ndIndexNeto !== null,
     pnlListo: pnlCrmIndex !== null,
   };
+  // Modo archivo (src/lib/archive-mode.ts): todo Guardar queda deshabilitado
+  // con el aviso como motivo, antes que cualquier otro bloqueo.
   const textoBloqueo = (m: MotivoBloqueoGuardado | null): string | null =>
-    m === 'esperando' ? t('comm.saveBlockedWaiting')
+    ARCHIVE_MODE ? t('archive.writeDisabled')
+    : m === 'esperando' ? t('comm.saveBlockedWaiting')
       : m === 'sin-nd' ? t('comm.saveBlockedNoNd')
         : m === 'sin-pnl' ? t('comm.saveBlockedNoPnl')
           : null;

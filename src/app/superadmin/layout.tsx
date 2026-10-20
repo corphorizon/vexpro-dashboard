@@ -9,6 +9,8 @@ import { LoadingScreen } from '@/components/loading-screen';
 import { SystemScreen } from '@/components/system-screen';
 import { SuperadminShell } from '@/components/superadmin/superadmin-shell';
 import { actionButtonClass } from '@/components/ui/action-button';
+import { AtlasMigrationBannerView } from '@/components/atlas-migration-notice';
+import { ARCHIVE_MODE } from '@/lib/archive-mode';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin — panel de la plataforma (Exura Global).
@@ -70,6 +72,8 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
 
   return (
     <SuperadminShell email={user.email} name={user.name} onLogout={logout}>
+      {/* Modo archivo (src/lib/archive-mode.ts): el panel también lo dice. */}
+      {ARCHIVE_MODE && <AtlasMigrationBannerView />}
       {children}
     </SuperadminShell>
   );
