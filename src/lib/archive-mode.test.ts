@@ -81,7 +81,6 @@ describe('archiveDecision', () => {
     ['PATCH', '/api/user/language'],
     ['POST', '/api/admin/reset-password'], // reset hecho por un admin: NO es excepción
     ['POST', '/api/superadmin/partner-tokens'],
-    ['POST', '/api/partner/v1/customers'], // la API de socio abierta es sólo lectura
   ];
 
   it.each(WRITE_ROUTES)('%s %s → bloqueada (write)', (m, p) => {
@@ -135,8 +134,8 @@ describe('archiveDecision', () => {
     expect(archiveDecision('POST', '/api/webhooks/paypros/tok', true)).toEqual({ blocked: false });
   });
 
-  it('API de socio: abierta mientras ARCHIVE_PARTNER_API_OPEN, 410 al cerrarla', () => {
-    expect(ARCHIVE_PARTNER_API_OPEN).toBe(true);
+  it('API de socio: cerrada (410) desde 2026-10-20; abrirla sigue siendo posible por el interruptor', () => {
+    expect(ARCHIVE_PARTNER_API_OPEN).toBe(false);
     for (const p of ['/api/partner/v1/customers', '/api/partner/v1/trading-activity']) {
       expect(archiveDecision('GET', p, true, true)).toEqual({ blocked: false });
       expect(archiveDecision('GET', p, true, false)).toEqual({ blocked: true, reason: 'partner' });
